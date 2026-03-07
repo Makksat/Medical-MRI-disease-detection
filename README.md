@@ -56,3 +56,10 @@ The long-term goal is to extend the same framework to Multiple Sclerosis and Fed
 - Refactor shared code into reusable Python modules
 - Add federated learning experiments
 - Prepare final internship report and presentation
+
+## Current Results
+
+| Task | Dataset | AUC | Accuracy | Explainability |
+|------|---------|-----|----------|----------------|
+| Cognitive impairment proxy | OASIS Cross-Sectional | ~0.94 | ~0.91 | Occlusion |
+| Parkinson vs Control | OpenNeuro ds005892 | ~0.89 | ~0.91 | Grad-CAM |
