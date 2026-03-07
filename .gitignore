@@ -1,0 +1,10 @@
+__pycache__/
+.ipynb_checkpoints/
+*.pt
+*.pth
+*.zip
+*.nii
+*.nii.gz
+*.tar.gz
+datasets/
+data/
