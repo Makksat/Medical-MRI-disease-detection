@@ -1,10 +1,67 @@
+# Python
 __pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter / Colab
 .ipynb_checkpoints/
+*.nbconvert.ipynb
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Large model files / checkpoints
 *.pt
 *.pth
-*.zip
+*.ckpt
+*.onnx
+
+# Medical imaging data
 *.nii
 *.nii.gz
+*.mha
+*.mhd
+*.nrrd
+*.dcm
+
+# Compressed datasets / archives
+*.zip
+*.tar
 *.tar.gz
-datasets/
-data/
+*.tgz
+*.7z
+
+# Results that are usually too large or temporary
+outputs/
+cache/
+.tmp/
+
+# Colab / Drive artifacts
+/content/
+/drive/
+
+# Environment files
+.env
+.env.*
+
+# Mac temporary
+._*
