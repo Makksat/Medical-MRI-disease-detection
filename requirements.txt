@@ -1,9 +1,8 @@
-monai
 torch
-nibabel
+monai
 numpy
 pandas
 matplotlib
 scikit-learn
+nibabel
 tqdm
-captum
