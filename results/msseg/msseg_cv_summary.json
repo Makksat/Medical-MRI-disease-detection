@@ -1,0 +1,26 @@
+{
+  "task": "MS lesion segmentation",
+  "dataset": "MSSEG 2016 Training",
+  "model": "MONAI 3D UNet",
+  "input_channels": 4,
+  "modalities": [
+    "FLAIR",
+    "T1",
+    "T2",
+    "DP"
+  ],
+  "num_folds": 3,
+  "epochs_per_fold": 30,
+  "fold_best_dice": [
+    0.010494857095181942,
+    0.060520239174366,
+    0.028799140825867653
+  ],
+  "fold_best_epoch": [
+    30,
+    29,
+    29
+  ],
+  "mean_dice": 0.03327141236513853,
+  "std_dice": 0.020666165949571078
+}
