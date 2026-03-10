@@ -6,4 +6,4 @@ matplotlib
 scikit-learn
 nibabel
 tqdm
-flwr
+flwr[simulation]>=1.13,<2.0
