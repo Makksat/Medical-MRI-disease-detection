@@ -17,14 +17,6 @@ from src.utils import set_seed
 
 
 def load_parkinson_samples(data_root: str) -> list[dict]:
-    """
-    Expected OpenNeuro/BIDS-style structure:
-    data_root/
-        participants.tsv
-        sub-XXXX/
-            anat/
-                sub-XXXX_T1w.nii.gz
-    """
     data_root = Path(data_root)
     participants_tsv = data_root / "participants.tsv"
 
@@ -98,7 +90,6 @@ def make_client_fn(
 ):
     def client_fn(cid: str):
         client_id = int(cid)
-
         return MRIClassificationClient(
             train_samples=client_train_splits[client_id],
             val_samples=client_val_splits[client_id],
@@ -111,7 +102,7 @@ def make_client_fn(
     return client_fn
 
 
-def _to_serializable_history(history) -> dict:
+def _history_to_dict(history) -> dict:
     return {
         "losses_distributed": history.losses_distributed,
         "losses_centralized": history.losses_centralized,
@@ -121,7 +112,7 @@ def _to_serializable_history(history) -> dict:
     }
 
 
-def _build_metrics_dataframe(history) -> pd.DataFrame:
+def _history_to_dataframe(history) -> pd.DataFrame:
     round_map: dict[int, dict] = {}
 
     for rnd, loss in history.losses_distributed:
@@ -151,23 +142,26 @@ def save_fl_results(
 ) -> tuple[str, str]:
     os.makedirs(out_dir, exist_ok=True)
 
-    history_payload = {
+    json_path = os.path.join(out_dir, f"{experiment_name}_history.json")
+    csv_path = os.path.join(out_dir, f"{experiment_name}_metrics.csv")
+
+    payload = {
         "experiment_name": experiment_name,
         "config": config_dict,
         "client_summary": client_summary,
-        "history": _to_serializable_history(history),
+        "history": _history_to_dict(history),
     }
 
-    json_path = os.path.join(out_dir, f"{experiment_name}_history.json")
     with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(history_payload, f, indent=2)
+        json.dump(payload, f, indent=2)
 
-    metrics_df = _build_metrics_dataframe(history)
-    csv_path = os.path.join(out_dir, f"{experiment_name}_metrics.csv")
-    metrics_df.to_csv(csv_path, index=False)
+    df = _history_to_dataframe(history)
+    df.to_csv(csv_path, index=False)
 
     print(f"Saved federated history to: {json_path}")
     print(f"Saved federated metrics to: {csv_path}")
+    print("JSON exists:", os.path.exists(json_path))
+    print("CSV exists:", os.path.exists(csv_path))
 
     return json_path, csv_path
 
@@ -176,7 +170,7 @@ def main():
     set_seed(42)
 
     data_root = "/content/drive/MyDrive/Internship_MONAI/data_zips/ds005892-download"
-    out_dir = "/content/fl_parkinson_outputs"
+    out_dir = "/content/drive/MyDrive/Internship_MONAI/fl_results"
     experiment_name = "parkinson_fl_2clients_3rounds"
 
     num_clients = 2
@@ -199,16 +193,8 @@ def main():
     print(f"Global train samples: {len(train_samples)}")
     print(f"Global val samples: {len(val_samples)}")
 
-    client_train_splits = split_samples_iid(
-        train_samples,
-        num_clients=num_clients,
-        seed=42,
-    )
-    client_val_splits = split_samples_iid(
-        val_samples,
-        num_clients=num_clients,
-        seed=42,
-    )
+    client_train_splits = split_samples_iid(train_samples, num_clients=num_clients, seed=42)
+    client_val_splits = split_samples_iid(val_samples, num_clients=num_clients, seed=42)
 
     print("\nClient train summary:")
     print_client_summary(client_train_splits)
@@ -258,7 +244,6 @@ def main():
         image_size=image_size,
     )
 
-    # Safety for notebook sessions
     if ray.is_initialized():
         ray.shutdown()
 
@@ -290,7 +275,6 @@ def main():
     )
 
     return {
-        "history": history,
         "json_path": json_path,
         "csv_path": csv_path,
     }
