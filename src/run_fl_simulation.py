@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 import glob
-import pandas as pd
-import flwr as fl
 import json
 import os
+
+import pandas as pd
+import flwr as fl
+import ray
 
 from src.data import split_classification_data
 from src.fl_client import MRIClassificationClient
@@ -23,7 +25,6 @@ def load_parkinson_samples(data_root: str) -> list[dict]:
             anat/
                 sub-XXXX_T1w.nii.gz
     """
-
     data_root = Path(data_root)
     participants_tsv = data_root / "participants.tsv"
 
@@ -109,13 +110,9 @@ def make_client_fn(
 
     return client_fn
 
-def save_fl_history(history, out_dir: str, experiment_name: str, config_dict: dict, client_summary: dict):
-    os.makedirs(out_dir, exist_ok=True)
 
-    result = {
-        "experiment_name": experiment_name,
-        "config": config_dict,
-        "client_summary": client_summary,
+def _to_serializable_history(history) -> dict:
+    return {
         "losses_distributed": history.losses_distributed,
         "losses_centralized": history.losses_centralized,
         "metrics_distributed_fit": history.metrics_distributed_fit,
@@ -123,33 +120,57 @@ def save_fl_history(history, out_dir: str, experiment_name: str, config_dict: di
         "metrics_centralized": history.metrics_centralized,
     }
 
-    json_path = os.path.join(out_dir, f"{experiment_name}_history.json")
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(result, f, indent=2)
 
-    print(f"Saved federated history to: {json_path}")
-
-    # Optional flat CSV for distributed eval metrics
-    rows = []
-    metric_dict = history.metrics_distributed if history.metrics_distributed else {}
-
-    round_map = {}
-    for metric_name, values in metric_dict.items():
-        for rnd, val in values:
-            round_map.setdefault(rnd, {"round": rnd})
-            round_map[rnd][metric_name] = val
+def _build_metrics_dataframe(history) -> pd.DataFrame:
+    round_map: dict[int, dict] = {}
 
     for rnd, loss in history.losses_distributed:
         round_map.setdefault(rnd, {"round": rnd})
         round_map[rnd]["loss_distributed"] = loss
 
-    rows = [round_map[r] for r in sorted(round_map.keys())]
+    for metric_name, values in history.metrics_distributed_fit.items():
+        for rnd, val in values:
+            round_map.setdefault(rnd, {"round": rnd})
+            round_map[rnd][metric_name] = val
 
-    if rows:
-        df = pd.DataFrame(rows)
-        csv_path = os.path.join(out_dir, f"{experiment_name}_metrics.csv")
-        df.to_csv(csv_path, index=False)
-        print(f"Saved federated metrics CSV to: {csv_path}")
+    for metric_name, values in history.metrics_distributed.items():
+        for rnd, val in values:
+            round_map.setdefault(rnd, {"round": rnd})
+            round_map[rnd][metric_name] = val
+
+    rows = [round_map[r] for r in sorted(round_map.keys())]
+    return pd.DataFrame(rows)
+
+
+def save_fl_results(
+    history,
+    out_dir: str,
+    experiment_name: str,
+    config_dict: dict,
+    client_summary: dict,
+) -> tuple[str, str]:
+    os.makedirs(out_dir, exist_ok=True)
+
+    history_payload = {
+        "experiment_name": experiment_name,
+        "config": config_dict,
+        "client_summary": client_summary,
+        "history": _to_serializable_history(history),
+    }
+
+    json_path = os.path.join(out_dir, f"{experiment_name}_history.json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(history_payload, f, indent=2)
+
+    metrics_df = _build_metrics_dataframe(history)
+    csv_path = os.path.join(out_dir, f"{experiment_name}_metrics.csv")
+    metrics_df.to_csv(csv_path, index=False)
+
+    print(f"Saved federated history to: {json_path}")
+    print(f"Saved federated metrics to: {csv_path}")
+
+    return json_path, csv_path
+
 
 def main():
     set_seed(42)
@@ -237,6 +258,10 @@ def main():
         image_size=image_size,
     )
 
+    # Safety for notebook sessions
+    if ray.is_initialized():
+        ray.shutdown()
+
     history = fl.simulation.start_simulation(
         client_fn=client_fn,
         num_clients=num_clients,
@@ -246,6 +271,8 @@ def main():
 
     config_dict = {
         "data_root": data_root,
+        "out_dir": out_dir,
+        "experiment_name": experiment_name,
         "num_clients": num_clients,
         "num_rounds": num_rounds,
         "batch_size": batch_size,
@@ -254,10 +281,20 @@ def main():
         "image_size": image_size,
     }
 
-    save_fl_history(
+    json_path, csv_path = save_fl_results(
         history=history,
         out_dir=out_dir,
         experiment_name=experiment_name,
         config_dict=config_dict,
         client_summary=client_summary,
     )
+
+    return {
+        "history": history,
+        "json_path": json_path,
+        "csv_path": csv_path,
+    }
+
+
+if __name__ == "__main__":
+    main()
