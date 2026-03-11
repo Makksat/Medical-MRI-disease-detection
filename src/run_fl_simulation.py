@@ -4,6 +4,8 @@ from pathlib import Path
 import glob
 import pandas as pd
 import flwr as fl
+import json
+import os
 
 from src.data import split_classification_data
 from src.fl_client import MRIClassificationClient
@@ -107,12 +109,54 @@ def make_client_fn(
 
     return client_fn
 
+def save_fl_history(history, out_dir: str, experiment_name: str, config_dict: dict, client_summary: dict):
+    os.makedirs(out_dir, exist_ok=True)
+
+    result = {
+        "experiment_name": experiment_name,
+        "config": config_dict,
+        "client_summary": client_summary,
+        "losses_distributed": history.losses_distributed,
+        "losses_centralized": history.losses_centralized,
+        "metrics_distributed_fit": history.metrics_distributed_fit,
+        "metrics_distributed": history.metrics_distributed,
+        "metrics_centralized": history.metrics_centralized,
+    }
+
+    json_path = os.path.join(out_dir, f"{experiment_name}_history.json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2)
+
+    print(f"Saved federated history to: {json_path}")
+
+    # Optional flat CSV for distributed eval metrics
+    rows = []
+    metric_dict = history.metrics_distributed if history.metrics_distributed else {}
+
+    round_map = {}
+    for metric_name, values in metric_dict.items():
+        for rnd, val in values:
+            round_map.setdefault(rnd, {"round": rnd})
+            round_map[rnd][metric_name] = val
+
+    for rnd, loss in history.losses_distributed:
+        round_map.setdefault(rnd, {"round": rnd})
+        round_map[rnd]["loss_distributed"] = loss
+
+    rows = [round_map[r] for r in sorted(round_map.keys())]
+
+    if rows:
+        df = pd.DataFrame(rows)
+        csv_path = os.path.join(out_dir, f"{experiment_name}_metrics.csv")
+        df.to_csv(csv_path, index=False)
+        print(f"Saved federated metrics CSV to: {csv_path}")
 
 def main():
     set_seed(42)
 
-    # CHANGE THIS PATH TO YOUR LOCAL DATASET LOCATION
     data_root = "/content/drive/MyDrive/Internship_MONAI/data_zips/ds005892-download"
+    out_dir = "/content/fl_parkinson_outputs"
+    experiment_name = "parkinson_fl_2clients_3rounds"
 
     num_clients = 2
     num_rounds = 3
@@ -151,6 +195,31 @@ def main():
     print("\nClient val summary:")
     print_client_summary(client_val_splits)
 
+    client_summary = {
+        "train": [
+            {
+                "client_id": i,
+                "num_samples": len(split),
+                "class_distribution": {
+                    str(k): sum(1 for x in split if x["label"] == k)
+                    for k in sorted(set(x["label"] for x in split))
+                },
+            }
+            for i, split in enumerate(client_train_splits)
+        ],
+        "val": [
+            {
+                "client_id": i,
+                "num_samples": len(split),
+                "class_distribution": {
+                    str(k): sum(1 for x in split if x["label"] == k)
+                    for k in sorted(set(x["label"] for x in split))
+                },
+            }
+            for i, split in enumerate(client_val_splits)
+        ],
+    }
+
     strategy = build_fedavg_strategy(
         fraction_fit=1.0,
         fraction_evaluate=1.0,
@@ -168,13 +237,27 @@ def main():
         image_size=image_size,
     )
 
-    fl.simulation.start_simulation(
+    history = fl.simulation.start_simulation(
         client_fn=client_fn,
         num_clients=num_clients,
         config=fl.server.ServerConfig(num_rounds=num_rounds),
         strategy=strategy,
     )
 
+    config_dict = {
+        "data_root": data_root,
+        "num_clients": num_clients,
+        "num_rounds": num_rounds,
+        "batch_size": batch_size,
+        "learning_rate": learning_rate,
+        "local_epochs": local_epochs,
+        "image_size": image_size,
+    }
 
-if __name__ == "__main__":
-    main()
+    save_fl_history(
+        history=history,
+        out_dir=out_dir,
+        experiment_name=experiment_name,
+        config_dict=config_dict,
+        client_summary=client_summary,
+    )
