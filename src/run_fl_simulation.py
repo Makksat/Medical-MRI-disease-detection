@@ -1,4 +1,3 @@
-%%writefile /content/Medical-MRI-disease-detection/src/run_fl_simulation.py
 from __future__ import annotations
 
 from pathlib import Path
