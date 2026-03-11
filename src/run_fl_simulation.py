@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-import os
-
+from pathlib import Path
+import glob
+import pandas as pd
 import flwr as fl
-from monai.data import Dataset
-from sklearn.model_selection import train_test_split
 
-from src.data import (
-    build_classification_samples_from_class_folders,
-    split_classification_data,
-)
+from src.data import split_classification_data
 from src.fl_client import MRIClassificationClient
 from src.fl_server import build_fedavg_strategy
 from src.fl_utils import print_client_summary, split_samples_iid
@@ -18,27 +14,72 @@ from src.utils import set_seed
 
 def load_parkinson_samples(data_root: str) -> list[dict]:
     """
-    Expected structure:
+    Expected OpenNeuro/BIDS-style structure:
     data_root/
-        control/
-            *.nii or *.nii.gz
-        parkinson/
-            *.nii or *.nii.gz
+        participants.tsv
+        sub-XXXX/
+            anat/
+                sub-XXXX_T1w.nii.gz
     """
-    class_to_label = {
-        "control": 0,
-        "parkinson": 1,
-    }
 
-    samples = build_classification_samples_from_class_folders(
-        root_dir=data_root,
-        class_to_label=class_to_label,
-    )
+    data_root = Path(data_root)
+    participants_tsv = data_root / "participants.tsv"
+
+    if not participants_tsv.exists():
+        raise FileNotFoundError(f"Missing participants.tsv: {participants_tsv}")
+
+    df = pd.read_csv(participants_tsv, sep="\t")
+
+    if "participant_id" not in df.columns or "group" not in df.columns:
+        raise ValueError(
+            "participants.tsv must contain at least 'participant_id' and 'group' columns"
+        )
+
+    df["group"] = df["group"].astype(str).str.strip()
+
+    def make_label(g):
+        if g.lower() == "control":
+            return 0
+        if g.upper().startswith("PD"):
+            return 1
+        return None
+
+    df["label"] = df["group"].apply(make_label)
+    df = df.dropna(subset=["label"]).copy()
+    df["label"] = df["label"].astype(int)
+
+    samples = []
+    missing = 0
+
+    for _, row in df.iterrows():
+        sub = row["participant_id"]
+        label = int(row["label"])
+
+        candidates = sorted(
+            glob.glob(str(data_root / sub / "anat" / f"{sub}_T1w.nii.gz"))
+        )
+
+        if len(candidates) == 0:
+            missing += 1
+            continue
+
+        samples.append(
+            {
+                "image": candidates[0],
+                "label": label,
+                "subject": sub,
+                "group": row["group"],
+                "age": row["age"] if "age" in df.columns else None,
+                "sex": row["sex"] if "sex" in df.columns else None,
+            }
+        )
+
+    print(f"Loaded {len(samples)} Parkinson samples | missing T1w: {missing}")
 
     if len(samples) == 0:
         raise ValueError(
-            f"No samples found in {data_root}. "
-            "Check folder names and MRI file extensions."
+            f"No usable T1w samples found in {data_root}. "
+            "Check participants.tsv and subject/anat file structure."
         )
 
     return samples
@@ -71,7 +112,7 @@ def main():
     set_seed(42)
 
     # CHANGE THIS PATH TO YOUR LOCAL DATASET LOCATION
-    data_root = "data/parkinson"
+    data_root = "/content/drive/MyDrive/Internship_MONAI/data_zips/ds005892-download"
 
     num_clients = 2
     num_rounds = 3
