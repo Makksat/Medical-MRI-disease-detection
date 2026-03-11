@@ -23,14 +23,6 @@ from src.utils import set_seed
 
 
 def load_parkinson_samples(data_root: str) -> list[dict]:
-    """
-    Expected OpenNeuro/BIDS-style structure:
-    data_root/
-        participants.tsv
-        sub-XXXX/
-            anat/
-                sub-XXXX_T1w.nii.gz
-    """
     data_root = Path(data_root)
     participants_tsv = data_root / "participants.tsv"
 
@@ -182,7 +174,7 @@ def main():
 
     data_root = "/content/drive/MyDrive/Internship_MONAI/data_zips/ds005892-download"
     out_dir = "/content/fl_parkinson_outputs"
-    backup_dir = "/content/drive/MyDrive/Internship_MONAI/fl_outputs"
+    backup_dir = "/content/drive/MyDrive/Internship_MONAI/fl_results"
     experiment_name = "parkinson_fl_2clients_3rounds"
 
     num_clients = 2
