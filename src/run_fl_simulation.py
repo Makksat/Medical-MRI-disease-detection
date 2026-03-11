@@ -1,13 +1,19 @@
+%%writefile /content/Medical-MRI-disease-detection/src/run_fl_simulation.py
 from __future__ import annotations
 
 from pathlib import Path
 import glob
 import json
 import os
-
+import shutil
 import pandas as pd
 import flwr as fl
-import ray
+import torch
+
+try:
+    import ray
+except Exception:
+    ray = None
 
 from src.data import split_classification_data
 from src.fl_client import MRIClassificationClient
@@ -17,6 +23,14 @@ from src.utils import set_seed
 
 
 def load_parkinson_samples(data_root: str) -> list[dict]:
+    """
+    Expected OpenNeuro/BIDS-style structure:
+    data_root/
+        participants.tsv
+        sub-XXXX/
+            anat/
+                sub-XXXX_T1w.nii.gz
+    """
     data_root = Path(data_root)
     participants_tsv = data_root / "participants.tsv"
 
@@ -102,7 +116,7 @@ def make_client_fn(
     return client_fn
 
 
-def _history_to_dict(history) -> dict:
+def _to_serializable_history(history) -> dict:
     return {
         "losses_distributed": history.losses_distributed,
         "losses_centralized": history.losses_centralized,
@@ -112,7 +126,7 @@ def _history_to_dict(history) -> dict:
     }
 
 
-def _history_to_dataframe(history) -> pd.DataFrame:
+def _build_metrics_dataframe(history) -> pd.DataFrame:
     round_map: dict[int, dict] = {}
 
     for rnd, loss in history.losses_distributed:
@@ -142,26 +156,23 @@ def save_fl_results(
 ) -> tuple[str, str]:
     os.makedirs(out_dir, exist_ok=True)
 
-    json_path = os.path.join(out_dir, f"{experiment_name}_history.json")
-    csv_path = os.path.join(out_dir, f"{experiment_name}_metrics.csv")
-
-    payload = {
+    history_payload = {
         "experiment_name": experiment_name,
         "config": config_dict,
         "client_summary": client_summary,
-        "history": _history_to_dict(history),
+        "history": _to_serializable_history(history),
     }
 
+    json_path = os.path.join(out_dir, f"{experiment_name}_history.json")
     with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+        json.dump(history_payload, f, indent=2)
 
-    df = _history_to_dataframe(history)
-    df.to_csv(csv_path, index=False)
+    metrics_df = _build_metrics_dataframe(history)
+    csv_path = os.path.join(out_dir, f"{experiment_name}_metrics.csv")
+    metrics_df.to_csv(csv_path, index=False)
 
     print(f"Saved federated history to: {json_path}")
     print(f"Saved federated metrics to: {csv_path}")
-    print("JSON exists:", os.path.exists(json_path))
-    print("CSV exists:", os.path.exists(csv_path))
 
     return json_path, csv_path
 
@@ -170,7 +181,8 @@ def main():
     set_seed(42)
 
     data_root = "/content/drive/MyDrive/Internship_MONAI/data_zips/ds005892-download"
-    out_dir = "/content/drive/MyDrive/Internship_MONAI/fl_results"
+    out_dir = "/content/fl_parkinson_outputs"
+    backup_dir = "/content/drive/MyDrive/Internship_MONAI/fl_outputs"
     experiment_name = "parkinson_fl_2clients_3rounds"
 
     num_clients = 2
@@ -193,8 +205,16 @@ def main():
     print(f"Global train samples: {len(train_samples)}")
     print(f"Global val samples: {len(val_samples)}")
 
-    client_train_splits = split_samples_iid(train_samples, num_clients=num_clients, seed=42)
-    client_val_splits = split_samples_iid(val_samples, num_clients=num_clients, seed=42)
+    client_train_splits = split_samples_iid(
+        train_samples,
+        num_clients=num_clients,
+        seed=42,
+    )
+    client_val_splits = split_samples_iid(
+        val_samples,
+        num_clients=num_clients,
+        seed=42,
+    )
 
     print("\nClient train summary:")
     print_client_summary(client_train_splits)
@@ -244,7 +264,7 @@ def main():
         image_size=image_size,
     )
 
-    if ray.is_initialized():
+    if ray is not None and ray.is_initialized():
         ray.shutdown()
 
     history = fl.simulation.start_simulation(
@@ -252,11 +272,16 @@ def main():
         num_clients=num_clients,
         config=fl.server.ServerConfig(num_rounds=num_rounds),
         strategy=strategy,
+        client_resources={
+            "num_cpus": 1,
+            "num_gpus": 1.0 if torch.cuda.is_available() else 0.0,
+        },
     )
 
     config_dict = {
         "data_root": data_root,
         "out_dir": out_dir,
+        "backup_dir": backup_dir,
         "experiment_name": experiment_name,
         "num_clients": num_clients,
         "num_rounds": num_rounds,
@@ -274,9 +299,21 @@ def main():
         client_summary=client_summary,
     )
 
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_json = os.path.join(backup_dir, os.path.basename(json_path))
+    backup_csv = os.path.join(backup_dir, os.path.basename(csv_path))
+    shutil.copy2(json_path, backup_json)
+    shutil.copy2(csv_path, backup_csv)
+
+    print(f"Backed up history to: {backup_json}")
+    print(f"Backed up metrics to: {backup_csv}")
+
     return {
+        "history": history,
         "json_path": json_path,
         "csv_path": csv_path,
+        "backup_json": backup_json,
+        "backup_csv": backup_csv,
     }
 
 
